@@ -4,7 +4,11 @@ from .sif import SongInfoFinder
 # sif/cli.py (updated output handling)
 def main():
     parser = argparse.ArgumentParser(description='SIF: Song Information Finder')
-    # ... existing arguments ...
+    parser.add_argument('--title', required=True, help='Title of the song')
+    parser.add_argument('--artist', required=True, help='Artist of the song')
+    parser.add_argument('--compare', action='store_true', help='Compare with another song')
+    parser.add_argument('--compare-title', help='Title of the song to compare with')
+    parser.add_argument('--compare-artist', help='Artist of the song to compare with')
     
     args = parser.parse_args()
     sif = SongInfoFinder()
