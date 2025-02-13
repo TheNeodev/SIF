@@ -1,26 +1,28 @@
 import argparse
 from .sif import SongInfoFinder
 
+# sif/cli.py (updated output handling)
 def main():
     parser = argparse.ArgumentParser(description='SIF: Song Information Finder')
-    parser.add_argument('--title', required=True, help='Title of the song')
-    parser.add_argument('--artist', required=True, help='Artist of the song')
-    parser.add_argument('--compare', action='store_true', help='Compare with another song')
-    parser.add_argument('--compare-title', help='Title of the song to compare with')
-    parser.add_argument('--compare-artist', help='Artist of the song to compare with')
-
+    # ... existing arguments ...
+    
     args = parser.parse_args()
     sif = SongInfoFinder()
 
     song1 = sif.get_song_info(args.title, args.artist)
-    if not song1:
-        print(f"No data found for {args.title} by {args.artist}")
-        return
-
     print(f"\nSong: {song1['title']} by {song1['artist']}")
-    print(f"BPM: {song1['bpm']:.1f}")
-    print(f"Key: {song1['key']} {song1['scale']}")
+    
+    if song1['bpm'] > 0:
+        print(f"BPM: {song1['bpm']:.1f}")
+    else:
+        print("BPM: Not available")
+    
+    if song1['key'] != 'N/A':
+        print(f"Key: {song1['key']} {song1['scale']}")
+    else:
+        print("Key: Not available")
 
+    
     if args.compare:
         if not args.compare_title or not args.compare_artist:
             parser.error("--compare requires --compare-title and --compare-artist")
