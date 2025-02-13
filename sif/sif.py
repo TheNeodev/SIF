@@ -1,58 +1,113 @@
 import requests
+from difflib import SequenceMatcher
 
 class SongInfoFinder:
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'SIF/1.0 (https://github.com/yourusername/sif)'
+        }
+
+    def _best_match(self, query, items, threshold=0.6):
+        matches = []
+        for item in items:
+            ratio = SequenceMatcher(None, query.lower(), item.lower()).ratio()
+            if ratio >= threshold:
+                matches.append((ratio, item))
+        return sorted(matches, reverse=True)[0][1] if matches else None
+
     def _search_musicbrainz(self, title, artist):
-        url = "http://musicbrainz.org/ws/2/recording/"
+        url = "https://musicbrainz.org/ws/2/recording/"
         params = {
-            'query': f'artist:"{artist}" AND recording:"{title}"',
-            'fmt': 'json'
+            'query': f'recording:"{title}" AND artist:"{artist}"',
+            'fmt': 'json',
+            'limit': 10
         }
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, headers=self.headers)
             response.raise_for_status()
             data = response.json()
-            if 'recordings' in data and data['recordings']:
-                recording = data['recordings'][0]
-                mbid = recording['id']
-                title = recording['title']
-                artist_name = recording['artist-credit'][0]['name'] if recording.get('artist-credit') else artist
-                return (mbid, title, artist_name)
+            
+            for recording in data.get('recordings', []):
+                mbid = recording.get('id')
+                if not mbid:
+                    continue
+                
+                # Try to get acoustic data first
+                if self._get_acoustic_data(mbid):
+                    return (
+                        mbid,
+                        recording.get('title', title),
+                        recording.get('artist-credit', [{}])[0].get('name', artist)
+                    )
+            
+            # Fallback to first recording if no acoustic data found
+            if data.get('recordings'):
+                first_rec = data['recordings'][0]
+                return (
+                    first_rec.get('id'),
+                    first_rec.get('title', title),
+                    first_rec.get('artist-credit', [{}])[0].get('name', artist)
+                )
+                
         except requests.exceptions.RequestException:
             pass
         return (None, None, None)
 
     def _get_acoustic_data(self, mbid):
-        url = f"https://acousticbrainz.org/api/v1/{mbid}/low-level"
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-            return response.json()
+            response = requests.get(
+                f"https://acousticbrainz.org/api/v1/{mbid}/low-level",
+                headers=self.headers,
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if 'rhythm' in data and 'tonal' in data:
+                    return data
+            return None
+        except (requests.exceptions.RequestException, ValueError):
+            return None
+
+    def _get_fallback_bpm(self, title, artist):
+        try:
+            response = requests.get(
+                "https://api.getsongbpm.com/search/",
+                params={'q': f'{title} {artist}'},
+                headers={'X-API-KEY': 'public'}  # Public demo key
+            )
+            data = response.json()
+            if data.get('search'):
+                return data['search'][0].get('tempo')
         except requests.exceptions.RequestException:
             return None
 
     def get_song_info(self, title, artist):
+        # Try MusicBrainz first
         mbid, found_title, found_artist = self._search_musicbrainz(title, artist)
-        if not mbid:
-            return None
+        acoustic_data = self._get_acoustic_data(mbid) if mbid else None
+        
+        # Fallback to getsongbpm if no acoustic data
+        bpm = None
+        if acoustic_data:
+            try:
+                bpm = acoustic_data['rhythm']['bpm']
+                key = acoustic_data['tonal']['key_key']
+                scale = acoustic_data['tonal']['key_scale']
+            except KeyError:
+                pass
+        else:
+            bpm = self._get_fallback_bpm(found_title or title, found_artist or artist)
 
-        acoustic_data = self._get_acoustic_data(mbid)
-        if not acoustic_data:
-            return None
-
-        try:
-            bpm = acoustic_data['rhythm']['bpm']
-            key = acoustic_data['tonal']['key_key']
-            scale = acoustic_data['tonal']['key_scale']
-        except KeyError:
-            return None
-
+        # Final fallback values
         return {
-            'title': found_title,
-            'artist': found_artist,
-            'bpm': bpm,
-            'key': key,
-            'scale': scale.lower()
+            'title': found_title or title,
+            'artist': found_artist or artist,
+            'bpm': bpm or 0,
+            'key': (acoustic_data or {}).get('tonal', {}).get('key_key', 'N/A'),
+            'scale': (acoustic_data or {}).get('tonal', {}).get('key_scale', 'N/A').lower()
         }
+
+    # ... keep existing compatibility methods ...
 
     def is_bpm_compatible(self, bpm1, bpm2, tolerance=0.02):
         if bpm1 <= 0 or bpm2 <= 0:
